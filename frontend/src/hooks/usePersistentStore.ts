@@ -5,7 +5,7 @@ import type { Cave, Segment, Sketch, Station } from '@/types'
 import { computeHorizontal, computeVertical } from '@/utils/survey'
 
 /** IndexedDB 数据结构版本号（升级迁移时使用） */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export interface MetaRow {
   key: string
@@ -48,6 +48,26 @@ class CaveSurveyDb extends Dexie {
             }
             if (!Number.isFinite(station.verticalDistance)) {
               station.verticalDistance = computeVertical(station.dip, station.slopeDistance)
+            }
+          })
+      })
+    // v3：洞段新增「复核封存」记录（随洞段行持久化）；
+    // 老数据无该字段即视为未封存，此处仅做防御性规整。
+    this.version(SCHEMA_VERSION)
+      .stores({
+        caves: 'id, name, region, archived',
+        segments: 'id, caveId, code, type',
+        stations: 'id, segmentId, code, date',
+        sketches: 'id, segmentId, code, mergeOrder',
+        meta: 'key'
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table<Segment, string>('segments')
+          .toCollection()
+          .modify((segment) => {
+            if (segment.review !== undefined && (typeof segment.review !== 'object' || segment.review === null)) {
+              delete segment.review
             }
           })
       })

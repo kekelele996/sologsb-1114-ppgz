@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla'
 import type { Station } from '@/types'
 import { db, syncAll, syncDelete, syncPut } from '@/hooks/usePersistentStore'
+import { reviewStore } from './reviewStore'
 
 export interface StationState {
   stations: Station[]
@@ -21,9 +22,15 @@ export const stationStore = createStore<StationState>((set, get) => ({
   save: async (station) => {
     await syncPut<Station>(db.stations, station)
     await get().hydrate()
+    // 测点新增或更新后，原封存转为「已变更待复核」，原封存数字仍留档
+    await reviewStore.getState().markChanged(station.segmentId)
   },
   remove: async (id) => {
+    const existing = get().stations.find((item) => item.id === id)
     await syncDelete(db.stations, id)
     await get().hydrate()
+    if (existing) {
+      await reviewStore.getState().markChanged(existing.segmentId)
+    }
   }
 }))

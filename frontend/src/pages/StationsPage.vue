@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Station } from '@/types'
+import type { ClosureResult, Station } from '@/types'
 import BearingInput from '@/components/common/BearingInput.vue'
 import ClosureBadge from '@/components/common/ClosureBadge.vue'
 import SegmentTag from '@/components/common/SegmentTag.vue'
@@ -10,7 +10,14 @@ import { useClosureCheck } from '@/hooks/useClosureCheck'
 import { segmentStore } from '@/stores/segmentStore'
 import { stationStore } from '@/stores/stationStore'
 import { caveStore } from '@/stores/caveStore'
-import { computeHorizontal, computeVertical, formatDms, isValidBearing, isValidDip } from '@/utils/survey'
+import {
+  computeHorizontal,
+  computeVertical,
+  formatDms,
+  isAbnormalStation,
+  isValidBearing,
+  isValidDip
+} from '@/utils/survey'
 import { nextCode, uid } from '@/utils/id'
 
 const caveState = useStore(caveStore)
@@ -40,6 +47,11 @@ const segmentOptions = computed(() =>
 )
 const currentSegment = computed(() => segmentState.segments.find((segment) => segment.id === selectedSegmentId.value))
 
+/** 当前洞段复核封存状态 */
+const review = computed(() => currentSegment.value?.review)
+const isSealed = computed(() => review.value !== undefined && !review.value.changed)
+const isReviewChanged = computed(() => review.value?.changed === true)
+
 const segmentStations = computed(() =>
   stationState.stations
     .filter((station) => station.segmentId === selectedSegmentId.value)
@@ -66,15 +78,32 @@ const pendingStation = computed<Station>(() => ({
 const closureInput = computed<Station[]>(() => [...segmentStations.value, pendingStation.value])
 const { result: closureResult, over: closureOver } = useClosureCheck(closureInput)
 
+/** 封存有效时徽标展示封存当时的闭合差；待复核/未封存时展示实时闭合差 */
+const sealedLevel = computed<ClosureResult['level'] | null>(() => {
+  const item = review.value
+  if (!item || item.changed) return null
+  if (item.overThreshold) return '超限'
+  return item.closure < item.threshold * 0.4 ? '优' : '良'
+})
+const badgeClosure = computed(() => (sealedLevel.value ? review.value?.closure ?? 0 : closureResult.value.closure))
+const badgeThreshold = computed(() =>
+  sealedLevel.value ? review.value?.threshold ?? closureResult.value.threshold : closureResult.value.threshold
+)
+const badgeLevel = computed<ClosureResult['level']>(() => sealedLevel.value ?? closureResult.value.level)
+const badgeDetail = computed(() => (sealedLevel.value ? review.value?.detail ?? '' : closureResult.value.detail))
+const badgeCount = computed(() => (sealedLevel.value ? review.value?.stationCount ?? 0 : segmentStations.value.length))
+
 const previewHorizontal = computed(() => computeHorizontal(form.dip, form.slopeDistance))
 const previewVertical = computed(() => computeVertical(form.dip, form.slopeDistance))
 
 /** 异常读数：方位角或倾角超范围、斜距非正、水平距大于斜距 */
 function isAbnormal(station: Station): boolean {
-  if (!isValidBearing(station.bearing)) return true
-  if (!isValidDip(station.dip)) return true
-  if (!(station.slopeDistance > 0)) return true
-  return station.horizontalDistance > Math.abs(station.slopeDistance) + 0.001
+  return isAbnormalStation(station)
+}
+
+function formatSealTime(iso: string): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
 
 function rowClassName(param: { row: Station }): string {
@@ -153,9 +182,13 @@ async function submit(continueNext: boolean): Promise<void> {
     isClosurePoint: form.isClosurePoint,
     note: form.note.trim()
   }
+  const wasSealed = isSealed.value
   await stationStore.getState().save(station)
   lastSaved.value = `${station.code} · 水平距 ${station.horizontalDistance} m / 垂距 ${station.verticalDistance} m`
   ElMessage.success(existing ? `测点 ${station.code} 已更新` : `测点 ${station.code} 已录入`)
+  if (wasSealed) {
+    ElMessage.warning(`洞段封存已失效：${currentSegment.value?.code ?? ''} 转为「已变更待复核」，原封存数字仍留档`)
+  }
   editingId.value = null
   form.isClosurePoint = false
   form.note = ''
@@ -165,7 +198,18 @@ async function submit(continueNext: boolean): Promise<void> {
   }
 }
 
-function editStation(station: Station): void {
+async function editStation(station: Station): Promise<void> {
+  if (isSealed.value) {
+    try {
+      await ElMessageBox.confirm(
+        '该洞段已复核封存，修改测点将使封存转为「已变更待复核」，原封存数字仍留档。继续编辑？',
+        '封存提示',
+        { type: 'warning', confirmButtonText: '继续编辑' }
+      )
+    } catch {
+      return
+    }
+  }
   editingId.value = station.id
   form.code = station.code
   form.bearing = station.bearing
@@ -179,9 +223,17 @@ function editStation(station: Station): void {
 }
 
 async function removeStation(station: Station): Promise<void> {
-  await ElMessageBox.confirm(`确认删除测点「${station.code}」？`, '删除确认', { type: 'warning' })
+  const wasSealed = isSealed.value
+  const action = wasSealed ? '删除（该洞段封存将转为「已变更待复核」，原封存数字仍留档）' : '删除'
+  await ElMessageBox.confirm(`确认${action}测点「${station.code}」？`, '删除确认', {
+    type: 'warning',
+    confirmButtonText: wasSealed ? '确认删除并使封存失效' : '确定'
+  })
   await stationStore.getState().remove(station.id)
   ElMessage.success('测点已删除')
+  if (wasSealed) {
+    ElMessage.warning(`洞段封存已失效：${currentSegment.value?.code ?? ''} 转为「已变更待复核」`)
+  }
 }
 </script>
 
@@ -210,8 +262,31 @@ async function removeStation(station: Station): Promise<void> {
         />
       </el-select>
       <SegmentTag v-if="currentSegment" :type="currentSegment.type" :closed="currentSegment.closed" size="small" />
+      <el-tag v-if="isSealed" type="success" effect="dark" size="small">
+        已封存 · {{ review?.reviewer }} · {{ review?.stationCount }} 站 · 闭合差 {{ review?.closure.toFixed(3) }} m
+      </el-tag>
+      <el-tag v-else-if="isReviewChanged" type="warning" effect="dark" size="small">已变更待复核</el-tag>
       <el-button :disabled="!selectedSegmentId" @click="refreshDefaultCode">重算下一桩号</el-button>
     </div>
+
+    <el-alert
+      v-if="isSealed"
+      class="alert"
+      type="success"
+      :closable="false"
+      show-icon
+      :title="`该洞段已由 ${review?.reviewer} 复核封存（${formatSealTime(review?.sealedAt ?? '')}，${review?.stationCount} 站，闭合差 ${review?.closure.toFixed(3)} m）`"
+      description="封存记录与当时读数可在「洞段编目」页查看；若继续新增、更新或删除测点，封存将转为「已变更待复核」。"
+    />
+    <el-alert
+      v-else-if="isReviewChanged"
+      class="alert"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="该洞段封存已失效：封存后测点有新增、更新或移除，状态为「已变更待复核」"
+      description="原封存时的读数仍在洞段编目中留档；当前读数确认无误后请重新复核封存。"
+    />
 
     <el-card shadow="never" class="form-card">
       <el-form label-width="96px">
@@ -278,19 +353,23 @@ async function removeStation(station: Station): Promise<void> {
 
     <ClosureBadge
       class="closure"
-      :closure="closureResult.closure"
-      :threshold="closureResult.threshold"
-      :level="closureResult.level"
-      :detail="closureResult.detail"
-      :count="segmentStations.length"
+      :closure="badgeClosure"
+      :threshold="badgeThreshold"
+      :level="badgeLevel"
+      :detail="badgeDetail"
+      :count="badgeCount"
     />
     <el-alert
-      v-if="closureOver"
+      v-if="closureOver && !isSealed"
       class="alert"
       type="error"
       :closable="false"
       title="闭合差已超限"
-      description="当前洞段累计闭合差超过阈值，建议复测异常测点或对读数做误差分配。"
+      :description="
+        isReviewChanged
+          ? '封存已失效且当前闭合差超过阈值，确认读数后请重新复核封存并填写处理说明。'
+          : '当前洞段累计闭合差超过阈值，建议复测异常测点或对读数做误差分配。'
+      "
     />
 
     <h3 class="section-title">本洞段读数（{{ segmentStations.length }} 站）</h3>

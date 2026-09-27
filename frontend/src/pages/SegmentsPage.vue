@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Segment, SegmentType } from '@/types'
+import type { Segment, SegmentType, Station } from '@/types'
 import { SEGMENT_TYPES, segmentLength } from '@/types'
 import SegmentTag from '@/components/common/SegmentTag.vue'
+import ReviewSeal from '@/components/common/ReviewSeal.vue'
 import { useStore } from '@/hooks/usePersistentStore'
 import { caveStore } from '@/stores/caveStore'
 import { segmentStore } from '@/stores/segmentStore'
@@ -60,7 +61,11 @@ function caveName(caveId: string): string {
 }
 
 function stationCount(segmentId: string): number {
-  return stationState.stations.filter((station) => station.segmentId === segmentId).length
+  return segmentStations(segmentId).length
+}
+
+function segmentStations(segmentId: string): Station[] {
+  return stationState.stations.filter((station) => station.segmentId === segmentId)
 }
 
 function resetForm(): void {
@@ -122,7 +127,9 @@ async function submit(): Promise<void> {
     avgHeight: Number(form.avgHeight) || 0,
     slopeTrend: form.slopeTrend.trim(),
     closed: form.closed,
-    sketchNo: form.sketchNo.trim()
+    sketchNo: form.sketchNo.trim(),
+    // 封存记录随洞段保留，编目编辑不影响复核状态
+    review: existing?.review
   }
   await segmentStore.getState().save(segment)
   dialogVisible.value = false
@@ -230,6 +237,11 @@ async function removeSegment(segment: Segment): Promise<void> {
         <template #default="{ row }: { row: Segment }">{{ stationCount(row.id) }}</template>
       </el-table-column>
       <el-table-column prop="sketchNo" label="草图序号" width="100" />
+      <el-table-column label="复核封存" min-width="150">
+        <template #default="{ row }: { row: Segment }">
+          <ReviewSeal :segment="row" :stations="segmentStations(row.id)" />
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }: { row: Segment }">
           <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>

@@ -1,3 +1,5 @@
+import type { SegmentReview } from './review'
+
 /** 洞段类型 */
 export const SEGMENT_TYPES = ['竖井', '廊道', '厅堂', '裂隙', '水道'] as const
 export type SegmentType = (typeof SEGMENT_TYPES)[number]
@@ -32,6 +34,8 @@ export interface Segment {
   closed: boolean
   /** 草图序号 */
   sketchNo: string
+  /** 复核封存记录（未封存时为空） */
+  review?: SegmentReview
 }
 
 /** 洞段长度 = 起止桩号之差（米） */
