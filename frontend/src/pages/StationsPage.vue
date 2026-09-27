@@ -10,7 +10,7 @@ import { useClosureCheck } from '@/hooks/useClosureCheck'
 import { segmentStore } from '@/stores/segmentStore'
 import { stationStore } from '@/stores/stationStore'
 import { caveStore } from '@/stores/caveStore'
-import { computeHorizontal, computeVertical, formatDms, isValidBearing, isValidDip } from '@/utils/survey'
+import { computeHorizontal, computeVertical, formatDms, isAbnormalStation, isValidBearing, isValidDip } from '@/utils/survey'
 import { nextCode, uid } from '@/utils/id'
 
 const caveState = useStore(caveStore)
@@ -69,12 +69,9 @@ const { result: closureResult, over: closureOver } = useClosureCheck(closureInpu
 const previewHorizontal = computed(() => computeHorizontal(form.dip, form.slopeDistance))
 const previewVertical = computed(() => computeVertical(form.dip, form.slopeDistance))
 
-/** 异常读数：方位角或倾角超范围、斜距非正、水平距大于斜距 */
+/** 异常读数：方位角或倾角超范围、斜距非正、水平距大于斜距（与复核封存共用同一判定） */
 function isAbnormal(station: Station): boolean {
-  if (!isValidBearing(station.bearing)) return true
-  if (!isValidDip(station.dip)) return true
-  if (!(station.slopeDistance > 0)) return true
-  return station.horizontalDistance > Math.abs(station.slopeDistance) + 0.001
+  return isAbnormalStation(station)
 }
 
 function rowClassName(param: { row: Station }): string {

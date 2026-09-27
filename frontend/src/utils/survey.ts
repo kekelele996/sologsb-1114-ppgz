@@ -109,6 +109,54 @@ export function stakeRangeOverlap(a1: number, a2: number, b1: number, b2: number
   return lo1 <= hi2 && lo2 <= hi1
 }
 
+/** 异常读数原因：方位角或倾角超范围、斜距非正、水平距大于斜距 */
+export function abnormalReasons(station: Station): string[] {
+  const reasons: string[] = []
+  if (!isValidBearing(station.bearing)) reasons.push(`方位角 ${station.bearing}° 超出 0°–360°`)
+  if (!isValidDip(station.dip)) reasons.push(`倾角 ${station.dip}° 超出 -90°–90°`)
+  if (!(station.slopeDistance > 0)) reasons.push(`斜距 ${station.slopeDistance} m 非正数`)
+  if (station.horizontalDistance > Math.abs(station.slopeDistance) + 0.001) {
+    reasons.push(`水平距 ${station.horizontalDistance} m 大于斜距 ${Math.abs(station.slopeDistance)} m`)
+  }
+  return reasons
+}
+
+/** 异常读数判定 */
+export function isAbnormalStation(station: Station): boolean {
+  return abnormalReasons(station).length > 0
+}
+
+/**
+ * 测点序列指纹：把每站全部读数字段序列化后做散列。
+ * 之后新增、更新或移除任一测点都会改变指纹，用于判定封存是否失效。
+ */
+export function fingerprintStations(stations: Station[]): string {
+  const text = stations
+    .map((station) =>
+      [
+        station.id,
+        station.code,
+        station.bearing,
+        station.dip,
+        station.slopeDistance,
+        station.horizontalDistance,
+        station.verticalDistance,
+        station.instrumentNo,
+        station.surveyor,
+        station.date,
+        station.isClosurePoint ? 1 : 0,
+        station.note
+      ].join(':')
+    )
+    .sort()
+    .join('|')
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0
+  }
+  return `${stations.length}.${hash.toString(36)}`
+}
+
 /**
  * 闭合差：把每站的方位角与水平距分解为东向/北向增量，
  * 导线闭合差即累计位移向量的模。
